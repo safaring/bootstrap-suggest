@@ -39,7 +39,7 @@
 			'data-key': this.key
 		});
 
-		this.load();
+		this.__setListener();
 
 	};
 
@@ -49,7 +49,6 @@
 				.on('suggest.show', $.proxy(this.options.onshow, this))
 				.on('suggest.select', $.proxy(this.options.onselect, this))
 				.on('suggest.lookup', $.proxy(this.options.onlookup, this))
-				.on('keypress', $.proxy(this.__keypress, this))
 				.on('keyup', $.proxy(this.__keyup, this));
 
 			return this;
@@ -180,6 +179,8 @@
 				val = $el.val(),
 				currentPos = $el.get(0).selectionStart;
 
+			var that = this;
+
 			for (var i = currentPos; i >= 0; i--) {
 				var subChar = $.trim(val.substring(i-1, i));
 				if (!subChar) {
@@ -187,14 +188,19 @@
 					break;
 				}
 
+				
 				if (subChar === this.key && $.trim(val.substring(i-2, i-1)) == '') {
+
 					this.query = val.substring(i, currentPos);
 					this._queryPos = [i, currentPos];
 					this._keyPos = i;
-					$resultItems = this.lookup(this.query);
 
-					if ($resultItems.length) this.show();
-					else this.hide();
+					$.when(this.__build(this.query)).done(function(){
+						$resultItems = that.lookup(that.query);
+						if ($resultItems.length) that.show();
+						else that.hide();
+					});
+					
 					break;
 				}
 			}
@@ -204,92 +210,111 @@
 			return this.$items.not('.hidden');
 		},
 
-		__build: function() {
+		__build: function(q){
+			var dtd = $.Deferred();
 			var elems = [], _data, $item,
 				$dropdown = this.$dropdown,
 				that = this;
-
-			if (typeof this.options.data == 'function') {
-				_data = this.options.data();
-			} else _data = this.options.data;
-
-			if (_data && _data instanceof Array) {
-				for (var i in _data) {
-					if ($item = this.__mapItem(_data[i]))
-						$dropdown.find('.dropdown-menu').append($item.addClass('hidden'));
+			if (this.options.serverUrl != '' &&  typeof this.options.serverUrl == 'string') {
+				function getUsersData(){
+					if (q == ''){
+						return $.ajax({
+						  	method: "GET",
+						  	url: that.options.serverUrl
+						});
+					} else {
+						return $.ajax({
+						  	method: "GET",
+						  	url: that.options.serverUrl,
+						  	data: { key:q }
+						});
+					}
 				}
-			}
+				$.when(getUsersData()).done(function(data){
+					var data = $.parseJSON(data).users,
+						menu = that.$dropdown.find('.dropdown-menu').empty();
 
-			var blur = function(e) {
-				that.hide();
-			}
-
-			this.$items = $dropdown.find('li:has(a)')
-				.on('click', function(e) {
-					e.preventDefault();
-					that.__select($(this).index());
-				})
-				.on('mouseover', function(e) {
-					that.$element.off('blur', blur);
-				})
-				.on('mouseout', function(e) {
-					that.$element.on('blur', blur);
-				});
-
-			this.$element.before($dropdown)
-				.on('blur', blur)
-				.on('keydown', function(e) {
-					var $visibleItems;
-					if (that.isShown) {
-						switch (e.keyCode) {
-							case 13: // enter key
-								$visibleItems = that.__getVisibleItems();
-								$visibleItems.each(function(index) {
-									if ($(this).is('.active'))
-										that.__select($(this).index());
-								});
-
-								return false;
-								break;
-							case 40: // arrow down
-								$visibleItems = that.__getVisibleItems();
-								if ($visibleItems.last().is('.active')) return false;
-								$visibleItems.each(function(index) {
-									var $this = $(this),
-										$next = $visibleItems.eq(index + 1);
-
-									//if (!$next.length) return false;
-
-									if ($this.is('.active')) {
-										if (!$next.is('.hidden')) {
-											$this.removeClass('active');
-											$next.addClass('active');
-										}
-										return false;
-									}
-								});
-								return false;
-							case 38: // arrow up
-								$visibleItems = that.__getVisibleItems();
-								if ($visibleItems.first().is('.active')) return false;
-								$visibleItems.each(function(index) {
-									var $this = $(this),
-										$prev = $visibleItems.eq(index - 1);
-
-									//if (!$prev.length) return false;
-
-									if ($this.is('.active')) {
-										if (!$prev.is('.hidden')) {
-											$this.removeClass('active');
-											$prev.addClass('active');
-										}
-										return false;
-									}
-								})
-								return false;
+				  	for (var i in data) {
+						if (that.$item = that.__mapItem(data[i])){
+							menu.append(that.$item);
 						}
 					}
-				});
+					
+					var blur = function(e) {
+						that.hide();
+					}
+
+					that.$items = $dropdown.find('li:has(a)')
+						.unbind('click').on('click', function(e) {
+							e.preventDefault();
+							that.__select($(this).index());
+						})
+						.unbind('mouseover').on('mouseover', function(e) {
+							that.$element.off('blur', blur);
+						})
+						.unbind('mouseout').on('mouseout', function(e) {
+							that.$element.on('blur', blur);
+						});
+
+					that.$element.before($dropdown)
+						.unbind('blur').on('blur', blur)
+						.unbind('keydown').on('keydown', function(e) {
+							var $visibleItems;
+							if (that.isShown) {
+								switch (e.keyCode) {
+									case 13: // enter key
+										$visibleItems = that.__getVisibleItems();
+										$visibleItems.each(function(index) {
+											if ($(this).is('.active'))
+												that.__select($(this).index());
+										});
+
+										return false;
+										break;
+									case 40: // arrow down
+										$visibleItems = that.__getVisibleItems();
+										if ($visibleItems.last().is('.active')) return false;
+										$visibleItems.each(function(index) {
+											var $this = $(this),
+												$next = $visibleItems.eq(index + 1);
+
+											//if (!$next.length) return false;
+
+											if ($this.is('.active')) {
+												if (!$next.is('.hidden')) {
+													$this.removeClass('active');
+													$next.addClass('active');
+												}
+												return false;
+											}
+										});
+										return false;
+									case 38: // arrow up
+										$visibleItems = that.__getVisibleItems();
+										if ($visibleItems.first().is('.active')) return false;
+										$visibleItems.each(function(index) {
+											var $this = $(this),
+												$prev = $visibleItems.eq(index - 1);
+
+											//if (!$prev.length) return false;
+
+											if ($this.is('.active')) {
+												if (!$prev.is('.hidden')) {
+													$this.removeClass('active');
+													$prev.addClass('active');
+												}
+												return false;
+											}
+										})
+										return false;
+								}
+							}
+						});
+					dtd.resolve();
+				});	
+			}
+
+			return dtd.promise();
 
 		},
 
@@ -359,29 +384,12 @@
 				$resultItems;
 
 			this.$items.addClass('hidden');
-			if (q != "") {
-				this.$items.filter(function (index) {
-					var $this = $(this),
-						value = $this.find('a:first').text();
+			this.$items.slice(0, options.filter.limit).removeClass('hidden active');
 
-					if (!options.filter.casesensitive) {
-						value = value.toLowerCase();
-						q = q.toLowerCase();
-					}
-
-		            return value.indexOf(q) != -1;
-		        }).slice(0, options.filter.limit).removeClass('hidden active');
-		    } else this.$items.slice(0, options.filter.limit).removeClass('hidden active');
-
-		    $resultItems = this.__getVisibleItems();
+			$resultItems = this.__getVisibleItems();
 		    this.$element.trigger($.extend({type: 'suggest.lookup'}, this), [q, $resultItems]);
 
 		    return $resultItems.eq(0).addClass('active');
-		},
-
-		load: function() {
-			this.__setListener();
-			this.__build();
 		},
 
 		hide: function() {
@@ -468,10 +476,11 @@
 
 	$.fn.suggest.defaults = {
 		data: [],
+		serverUrl: '',
 		map: undefined,
 		filter: {
 			casesensitive: false,
-			limit: 5
+			limit: 8
 		},
 
 		// events hook
